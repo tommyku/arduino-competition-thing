@@ -22,12 +22,13 @@ const int DISTANCE_SENSOR_PIN = A0;
 const int APP_STATE = 0;
 const int INIT_DISTANCE = 1;
 const int BOX_OPENED = 2;
+const int ARRIVED = 3;
 
 // reading keys
 const int READ_DISTANCE = 0;
 
 // run time states
-int states[] = {INITIAL_STAGE, 0, true};
+int states[] = {INITIAL_STAGE, 0, true, false};
 int readings[] = {0};
 
 Servo servo;
@@ -57,7 +58,7 @@ void errorAction() {
     return;
   }
 
-  tone(SPEAKER_PIN, 1000);
+  //tone(SPEAKER_PIN, 1000);
 
   digitalWrite(LED_PIN_GREEN, LOW);
   digitalWrite(LED_PIN_RED, HIGH);
@@ -67,7 +68,7 @@ int calculateNewState() {
   switch (states[APP_STATE]) {
     case INITIAL_STAGE:
       if (!states[BOX_OPENED]) { // closed
-        delay(4000); // give it enough time to rest
+        delay(500); // give it enough time to rest
         return CLOSING_STAGE;
       } else {
         return INITIAL_STAGE;
@@ -80,11 +81,9 @@ int calculateNewState() {
       if (states[BOX_OPENED]) {
         return ERROR_STAGE;
       }
-      /*
-      if (reading[GPS] == states[DESTINATION_GPS]) {
+      if (states[ARRIVED]) {
         return ARRIVAL_STAGE;
       }
-      */
       break;
     case ARRIVAL_STAGE:
       /*
@@ -100,6 +99,14 @@ int calculateNewState() {
     default:
       return states[APP_STATE];
   }
+}
+
+void ledBlink() {
+  digitalWrite(LED_PIN_GREEN, HIGH);
+  delay(500);
+  digitalWrite(LED_PIN_GREEN, LOW);
+  delay(500);
+  digitalWrite(LED_PIN_GREEN, HIGH);
 }
 
 void setup() {
@@ -130,7 +137,16 @@ void loop() {
 
   // changes states (based on readings)
   states[BOX_OPENED] = isOpen();
+    Serial.println(states[BOX_OPENED]);
+  Serial.println(states[BOX_OPENED]);
+  
+  states[ARRIVED] = isAtDestination();
+  int originalState = states[APP_STATE];
   states[APP_STATE] = calculateNewState();
+
+  if (originalState != states[APP_STATE]) {
+    ledBlink();
+  }
 
   // call the hardwares after state change
   servoAction();
