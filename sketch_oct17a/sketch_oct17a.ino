@@ -18,14 +18,17 @@ const int LED_PIN_RED = 5;
 const int LED_PIN_GREEN = 6;
 const int DISTANCE_SENSOR_PIN = A0;
 
-// state variables
+// state keys
 const int APP_STATE = 0;
 const int INIT_DISTANCE = 1;
 const int BOX_OPENED = 2;
 
+// reading keys
+const int READ_DISTANCE = 0;
+
 // run time states
 int states[] = {INITIAL_STAGE, 0, true};
-int readings[] = {};
+int readings[] = {0};
 
 Servo servo;
 
@@ -43,12 +46,18 @@ bool isOpen() {
   return (val - states[INIT_DISTANCE] < 100);
 }
 
+bool isAtDestination() {
+}
+
+bool isShaked() {
+}
+
 void errorAction() {
   if (states[APP_STATE] != ERROR_STAGE) {
     return;
   }
 
-  //tone(SPEAKER_PIN, 1000);
+  tone(SPEAKER_PIN, 1000);
 
   digitalWrite(LED_PIN_GREEN, LOW);
   digitalWrite(LED_PIN_RED, HIGH);
@@ -68,11 +77,11 @@ int calculateNewState() {
       return CARRYING_STAGE;
       break;
     case CARRYING_STAGE:
-      /*
-      if (states[BOX_OPENED] || abs(states[DISTANCE_SENSOR] - reading[DISTANCE_SENSOR]) > 10 || accelerometer.shaking) {
-        // error
+      if (states[BOX_OPENED]) {
         return ERROR_STAGE;
-      } else if (reading[GPS] == states[DESTINATION_GPS]) {
+      }
+      /*
+      if (reading[GPS] == states[DESTINATION_GPS]) {
         return ARRIVAL_STAGE;
       }
       */
@@ -110,6 +119,7 @@ void setup() {
 
   pinMode(LED_PIN_RED, OUTPUT);
   pinMode(LED_PIN_GREEN, OUTPUT);
+
   digitalWrite(LED_PIN_RED, LOW);
   digitalWrite(LED_PIN_GREEN, HIGH);
 }
