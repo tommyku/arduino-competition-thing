@@ -1,56 +1,18 @@
-// Test code for Adafruit GPS modules using MTK3329/MTK3339 driver
-//
-// This code shows how to listen to the GPS module in an interrupt
-// which allows the program to have more 'freedom' - just parse
-// when a new NMEA sentence is available! Then access data when
-// desired.
-//
-// Tested and works great with the Adafruit Ultimate GPS module
-// using MTK33x9 chipset
-//    ------> http://www.adafruit.com/products/746
-// Pick one up today at the Adafruit electronics shop 
-// and help support open source hardware & software! -ada
 
 #include <Adafruit_GPS.h>
 #include <SoftwareSerial.h>
+#include <SparkFun_ADXL345.h>         // SparkFun ADXL345 Library
 
-// If you're using a GPS module:
-// Connect the GPS Power pin to 5V
-// Connect the GPS Ground pin to ground
-// If using software serial (sketch example default):
-//   Connect the GPS TX (transmit) pin to Digital 3
-//   Connect the GPS RX (receive) pin to Digital 2
-// If using hardware serial (e.g. Arduino Mega):
-//   Connect the GPS TX (transmit) pin to Arduino RX1, RX2 or RX3
-//   Connect the GPS RX (receive) pin to matching TX1, TX2 or TX3
-
-// If you're using the Adafruit GPS shield, change 
-// SoftwareSerial mySerial(3, 2); -> SoftwareSerial mySerial(8, 7);
-// and make sure the switch is set to SoftSerial
-
-// If using software serial, keep this line enabled
-// (you can change the pin numbers to match your wiring):
 SoftwareSerial mySerial(3, 2);
-
-// If using hardware serial (e.g. Arduino Mega), comment out the
-// above SoftwareSerial line, and enable this line instead
-// (you can change the Serial number to match your wiring):
-
-//HardwareSerial mySerial = Serial1;
-
 
 Adafruit_GPS GPS(&mySerial);
 
+ADXL345 adxl = ADXL345();             // USE FOR I2C COMMUNICATION
 
-// Set GPSECHO to 'false' to turn off echoing the GPS data to the Serial console
-// Set to 'true' if you want to debug and listen to the raw GPS sentences. 
 #define GPSECHO  true
 
-// this keeps track of whether we're using the interrupt
-// off by default!
 boolean usingInterrupt = false;
 void useInterrupt(boolean); // Func prototype keeps Arduino 0023 happy
-
 
 int distance_sensorPin = A0;
 
@@ -68,13 +30,16 @@ int readings[1] = {LOCATION_INVALID};
 
 int OPEN_DISTANCE;
 
+int acceleration[10] = {};
+
+double shaken_threshold = 2.0;
 
 void setup()  
 {
     
-  // connect at 115200 so we can read the GPS fast enough and echo without dropping chars
+  // connect at 9600 so we can read the GPS fast enough and echo without dropping chars
   // also spit it out
-  Serial.begin(115200);
+  Serial.begin(9600);
   Serial.println("Setting GPS");
 
   // 9600 NMEA is the default baud rate for Adafruit MTK GPS's- some use 4800
@@ -102,10 +67,60 @@ void setup()
 
   delay(1000);
   // Ask for firmware version
+  Serial.println("GPS initiated");
   mySerial.println(PMTK_Q_RELEASE);
 
-    OPEN_DISTANCE = analogRead(distance_sensorPin);
+  OPEN_DISTANCE = analogRead(distance_sensorPin);
+  Serial.print("Distance sensor calibrated: open distance: ");
   Serial.println(OPEN_DISTANCE);
+
+
+  // Set up the accelerometer
+  adxl.powerOn();                     // Power on the ADXL345
+
+  adxl.setRangeSetting(16);           // Give the range settings
+                                      // Accepted values are 2g, 4g, 8g or 16g
+                                      // Higher Values = Wider Measurement Range
+                                      // Lower Values = Greater Sensitivity
+
+  adxl.setSpiBit(0);                  // Configure the device to be in 4 wire SPI mode when set to '0' or 3 wire SPI mode when set to 1
+                                      // Default: Set to 1
+                                      // SPI pins on the ATMega328: 11, 12 and 13 as reference in SPI Library 
+   
+  adxl.setActivityXYZ(1, 0, 0);       // Set to activate movement detection in the axes "adxl.setActivityXYZ(X, Y, Z);" (1 == ON, 0 == OFF)
+  adxl.setActivityThreshold(75);      // 62.5mg per increment   // Set activity   // Inactivity thresholds (0-255)
+ 
+  adxl.setInactivityXYZ(1, 0, 0);     // Set to detect inactivity in all the axes "adxl.setInactivityXYZ(X, Y, Z);" (1 == ON, 0 == OFF)
+  adxl.setInactivityThreshold(75);    // 62.5mg per increment   // Set inactivity // Inactivity thresholds (0-255)
+  adxl.setTimeInactivity(10);         // How many seconds of no activity is inactive?
+
+  adxl.setTapDetectionOnXYZ(0, 0, 1); // Detect taps in the directions turned ON "adxl.setTapDetectionOnX(X, Y, Z);" (1 == ON, 0 == OFF)
+ 
+  // Set values for what is considered a TAP and what is a DOUBLE TAP (0-255)
+  adxl.setTapThreshold(50);           // 62.5 mg per increment
+  adxl.setTapDuration(15);            // 625 μs per increment
+  adxl.setDoubleTapLatency(80);       // 1.25 ms per increment
+  adxl.setDoubleTapWindow(200);       // 1.25 ms per increment
+ 
+  // Set values for what is considered FREE FALL (0-255)
+  adxl.setFreeFallThreshold(7);       // (5 - 9) recommended - 62.5mg per increment
+  adxl.setFreeFallDuration(30);       // (20 - 70) recommended - 5ms per increment
+ 
+  // Setting all interupts to take place on INT1 pin
+  //adxl.setImportantInterruptMapping(1, 1, 1, 1, 1);     // Sets "adxl.setEveryInterruptMapping(single tap, double tap, free fall, activity, inactivity);" 
+                                                        // Accepts only 1 or 2 values for pins INT1 and INT2. This chooses the pin on the ADXL345 to use for Interrupts.
+                                                        // This library may have a problem using INT2 pin. Default to INT1 pin.
+  
+  // Turn on Interrupts for each mode (1 == ON, 0 == OFF)
+  adxl.InactivityINT(1);
+  adxl.ActivityINT(1);
+  adxl.FreeFallINT(1);
+  adxl.doubleTapINT(1);
+  adxl.singleTapINT(1);
+  
+  //attachInterrupt(digitalPinToInterrupt(interruptPin), ADXL_ISR, RISING);   // Attach Interrupt
+
+  Serial.println("Accelerometer initiated");
 
 }
 
@@ -138,10 +153,44 @@ void useInterrupt(boolean v) {
 
 int is_open(){
    int val = analogRead(distance_sensorPin);
-   Serial.print("Distance val is : "); Serial.println(val);
-   Serial.print("Open val is : "); Serial.println(OPEN_DISTANCE);
+   //Serial.print("Distance val is : "); Serial.println(val);
+   //Serial.print("Open val is : "); Serial.println(OPEN_DISTANCE);
    if (val - OPEN_DISTANCE < 100) return BOX_OPEN;
    else return BOX_CLOSE;  
+}
+
+int activity_record() {
+  
+  // getInterruptSource clears all triggered actions after returning value
+  // Do not call again until you need to recheck for triggered actions
+  byte interrupts = adxl.getInterruptSource();
+  
+  // Free Fall Detection
+  if(adxl.triggered(interrupts, ADXL345_FREE_FALL)){
+    Serial.println("*** FREE FALL ***");
+    return 1;
+  } 
+  
+  // Double Tap Detection
+  if(adxl.triggered(interrupts, ADXL345_DOUBLE_TAP)){
+    Serial.println("*** DOUBLE TAP ***");
+    return 1;
+  }
+  
+  // Tap Detection
+  if(adxl.triggered(interrupts, ADXL345_SINGLE_TAP)){
+    Serial.println("*** TAP ***");
+    return 1;
+  } 
+  return 0;
+}
+
+bool is_being_shaken(){ // Determine whether the box is rudely treated by calculation
+  double record = 0;
+  for (int i = 0; i < 10; i++) record += (double)acceleration[i] / (10 - i);
+  Serial.println(record);
+  if (record >= shaken_threshold) return true;
+  return false;
 }
 
 uint32_t timer = millis();
@@ -154,7 +203,7 @@ void loop()                     // run over and over again
     char c = GPS.read();
     // if you want to debug, this is a good time to do it!
     if (GPSECHO)
-      if (c) Serial.print(c);
+      if (c); //Serial.print(c);
   }
   
   // if a sentence is received, we can check the checksum, parse it...
@@ -174,7 +223,7 @@ void loop()                     // run over and over again
   // approximately every 2 seconds or so, print out the current stats
   if (millis() - timer > 2000) { 
     timer = millis(); // reset the timer
-    
+    /*
     Serial.print("\nTime: ");
     Serial.print(GPS.hour, DEC); Serial.print(':');
     Serial.print(GPS.minute, DEC); Serial.print(':');
@@ -200,17 +249,20 @@ void loop()                     // run over and over again
       Serial.print("Angle: "); Serial.println(GPS.angle);
       Serial.print("Altitude: "); Serial.println(GPS.altitude);
       Serial.print("Satellites: "); Serial.println((int)GPS.satellites);
-    }
+    }*/
   }
   
   float sq_distance = (GPS.latitudeDegrees - des_latitude)*(GPS.latitudeDegrees - des_latitude) + (GPS.longitudeDegrees - des_longtitude) * (GPS.longitudeDegrees - des_longtitude);
   
   if (sq_distance < 10000 || 1) readings[LOCATION_STATE] = LOCATION_VALID;
   else readings[LOCATION_STATE] = LOCATION_INVALID;
-  if (readings[LOCATION_STATE] == LOCATION_VALID) Serial.println("It is at the destination.");
+  if (readings[LOCATION_STATE] == LOCATION_VALID); //Serial.println("It is at the destination.");
   readings[BOX_STATE] = is_open();
-  if (readings[BOX_STATE] == BOX_OPEN) Serial.println("The box is detected to be open.");
-
-  delay(2000);
+  if (readings[BOX_STATE] == BOX_OPEN); //Serial.println("The box is detected to be open.");
+  for (int i = 0; i < 9; i++) acceleration[i] = acceleration[i+1];
+  acceleration[9] = activity_record(); 
+  if (is_being_shaken()) Serial.println("The box is being shaken.");
+  
+  delay(500);
 }
 
