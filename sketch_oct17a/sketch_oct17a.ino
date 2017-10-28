@@ -1,6 +1,9 @@
 #define GPSECHO  true
 
 #include <Servo.h>
+#include <SparkFun_ADXL345.h>
+
+ADXL345 adxl = ADXL345();             // USE FOR I2C COMMUNICATION
 
 // application states
 const int INITIAL_STAGE = 0;
@@ -42,6 +45,10 @@ int readings[] = {0, 0, 0};
 
 Servo servo;
 
+int acceleration[10] = {};
+
+double shaken_threshold = 2.0;
+
 void servoAction(bool stateChanged) {
   if (!stateChanged) {
     Serial.println('return');
@@ -67,10 +74,6 @@ bool isAtDestination() {
   float sq_distance = (readings[READ_LAT]- desLat) * (readings[READ_LAT]- desLat)
     + (readings[READ_LON] - desLong) * (readings[READ_LON] - desLong);
   return sq_distance < 10000;
-}
-
-bool isShaked() {
-  return false;
 }
 
 void errorAction() {
@@ -151,16 +154,69 @@ void setup() {
 
   digitalWrite(LED_PIN_RED, LOW);
   digitalWrite(LED_PIN_GREEN, HIGH);
+
+  adxl.powerOn();                     // Power on the ADXL345
+  adxl.setRangeSetting(16);           // Give the range settings
+  adxl.setSpiBit(0);                  // Configure the device to be in 4 wire SPI mode when set to '0' or 3 wire SPI mode when set to 1
+  adxl.setActivityXYZ(1, 0, 0);       // Set to activate movement detection in the axes "adxl.setActivityXYZ(X, Y, Z);" (1 == ON, 0 == OFF)
+  adxl.setActivityThreshold(75);      // 62.5mg per increment   // Set activity   // Inactivity thresholds (0-255)
+  adxl.setInactivityXYZ(1, 0, 0);     // Set to detect inactivity in all the axes "adxl.setInactivityXYZ(X, Y, Z);" (1 == ON, 0 == OFF)
+  adxl.setInactivityThreshold(75);    // 62.5mg per increment   // Set inactivity // Inactivity thresholds (0-255)
+  adxl.setTimeInactivity(10);         // How many seconds of no activity is inactive?
+  adxl.setTapDetectionOnXYZ(0, 0, 1); // Detect taps in the directions turned ON "adxl.setTapDetectionOnX(X, Y, Z);" (1 == ON, 0 == OFF)
+  adxl.setTapThreshold(50);           // 62.5 mg per increment
+  adxl.setTapDuration(15);            // 625 μs per increment
+  adxl.setDoubleTapLatency(80);       // 1.25 ms per increment
+  adxl.setDoubleTapWindow(200);       // 1.25 ms per increment
+  adxl.setFreeFallThreshold(7);       // (5 - 9) recommended - 62.5mg per increment
+  adxl.setFreeFallDuration(30);       // (20 - 70) recommended - 5ms per increment
+  adxl.InactivityINT(1);
+  adxl.ActivityINT(1);
+  adxl.FreeFallINT(1);
+  adxl.doubleTapINT(1);
+  adxl.singleTapINT(1);
 }
 
+int activity_record() {
+  byte interrupts = adxl.getInterruptSource();
+  // Free Fall Detection
+  if(adxl.triggered(interrupts, ADXL345_FREE_FALL)){
+    Serial.println("*** FREE FALL ***");
+    return 1;
+  }
+  // Double Tap Detection
+  if(adxl.triggered(interrupts, ADXL345_DOUBLE_TAP)){
+    Serial.println("*** DOUBLE TAP ***");
+    return 1;
+  }
+  // Tap Detection
+  if(adxl.triggered(interrupts, ADXL345_SINGLE_TAP)){
+    Serial.println("*** TAP ***");
+    return 1;
+  }
+  return 0;
+}
+
+bool is_being_shaken(){ // Determine whether the box is rudely treated by calculation
+  double record = 0;
+  for (int i = 0; i < 10; i++) record += (double)acceleration[i] / (10 - i);
+  Serial.println(record);
+  if (record >= shaken_threshold) return true;
+  return false;
+}
 
 void loop() {
   // read the values from sensors
+  for (int i = 0; i < 9; i++) {
+    acceleration[i] = acceleration[i+1];
+  }
+  acceleration[9] = activity_record();
 
   // changes states (based on readings)
   states[BOX_OPENED] = isOpen();
   states[ARRIVED] = isAtDestination();
-  states[SHAKED] = isShaked();
+  states[SHAKED] = is_being_shaken();
+  Serial.println(is_being_shaken());
   int originalState = states[APP_STATE];
   states[APP_STATE] = calculateNewState();
   bool stateChanged = originalState != states[APP_STATE];

@@ -175,8 +175,8 @@ int activity_record() {
   if(adxl.triggered(interrupts, ADXL345_DOUBLE_TAP)){
     Serial.println("*** DOUBLE TAP ***");
     return 1;
-  }
   
+  }
   // Tap Detection
   if(adxl.triggered(interrupts, ADXL345_SINGLE_TAP)){
     Serial.println("*** TAP ***");
