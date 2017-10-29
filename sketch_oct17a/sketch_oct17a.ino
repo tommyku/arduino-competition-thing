@@ -1,9 +1,17 @@
-#define GPSECHO  true
-
 #include <Servo.h>
+#include <Adafruit_GPS.h>
 #include <SparkFun_ADXL345.h>
 
+#define GPSSerial Serial
+
+Adafruit_GPS GPS(&GPSSerial);
+
+#define GPSECHO  false
+
 ADXL345 adxl = ADXL345();             // USE FOR I2C COMMUNICATION
+
+boolean usingInterrupt = false;
+void useInterrupt(boolean); // Func prototype keeps Arduino 0023 happy
 
 // application states
 const int INITIAL_STAGE = 0;
@@ -49,6 +57,8 @@ int acceleration[10] = {};
 
 double shaken_threshold = 2.0;
 
+int cycleBeforeFaking = 40;
+
 void servoAction(bool stateChanged) {
   if (!stateChanged) {
     Serial.println('return');
@@ -70,7 +80,6 @@ bool isOpen() {
 }
 
 bool isAtDestination() {
-  return false;
   float sq_distance = (readings[READ_LAT]- desLat) * (readings[READ_LAT]- desLat)
     + (readings[READ_LON] - desLong) * (readings[READ_LON] - desLong);
   return sq_distance < 10000;
@@ -81,7 +90,7 @@ void errorAction() {
     return;
   }
 
-  //tone(SPEAKER_PIN, 1000);
+  tone(SPEAKER_PIN, 1000);
 
   digitalWrite(LED_PIN_GREEN, LOW);
   digitalWrite(LED_PIN_RED, HIGH);
@@ -101,11 +110,11 @@ int calculateNewState() {
       return CARRYING_STAGE;
       break;
     case CARRYING_STAGE:
-      if (states[BOX_OPENED] || states[SHAKED]) {
-        return ERROR_STAGE;
-      }
       if (states[ARRIVED]) {
         return ARRIVAL_STAGE;
+      }
+      if (states[BOX_OPENED] || states[SHAKED]) {
+        return ERROR_STAGE;
       }
       break;
     case ARRIVAL_STAGE:
@@ -155,6 +164,17 @@ void setup() {
   digitalWrite(LED_PIN_RED, LOW);
   digitalWrite(LED_PIN_GREEN, HIGH);
 
+    // 9600 NMEA is the default baud rate for Adafruit MTK GPS's- some use 4800
+  GPS.begin(9600);
+  GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
+  GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);   // 1 Hz update rate
+  GPS.sendCommand(PGCMD_ANTENNA);
+
+  useInterrupt(true);
+
+  delay(1000);
+
+
   adxl.powerOn();                     // Power on the ADXL345
   adxl.setRangeSetting(16);           // Give the range settings
   adxl.setSpiBit(0);                  // Configure the device to be in 4 wire SPI mode when set to '0' or 3 wire SPI mode when set to 1
@@ -175,6 +195,32 @@ void setup() {
   adxl.FreeFallINT(1);
   adxl.doubleTapINT(1);
   adxl.singleTapINT(1);
+}
+
+// Interrupt is called once a millisecond, looks for any new GPS data, and stores it
+SIGNAL(TIMER0_COMPA_vect) {
+  char c = GPS.read();
+  // if you want to debug, this is a good time to do it!
+#ifdef UDR0
+  if (GPSECHO)
+    if (c) UDR0 = c;  
+    // writing direct to UDR0 is much much faster than Serial.print 
+    // but only one character can be written at a time. 
+#endif
+}
+
+void useInterrupt(boolean v) {
+  if (v) {
+    // Timer0 is already used for millis() - we'll just interrupt somewhere
+    // in the middle and call the "Compare A" function above
+    OCR0A = 0xAF;
+    TIMSK0 |= _BV(OCIE0A);
+    usingInterrupt = true;
+  } else {
+    // do not call the interrupt function COMPA anymore
+    TIMSK0 &= ~_BV(OCIE0A);
+    usingInterrupt = false;
+  }
 }
 
 int activity_record() {
@@ -207,6 +253,34 @@ bool is_being_shaken(){ // Determine whether the box is rudely treated by calcul
 
 void loop() {
   // read the values from sensors
+  if (GPS.newNMEAreceived()) {
+    // a tricky thing here is if we print the NMEA sentence, or data
+    // we end up not listening and catching other sentences! 
+    // so be very wary if using OUTPUT_ALLDATA and trytng to print out data
+    //Serial.println(GPS.lastNMEA());   // this also sets the newNMEAreceived() flag to false
+    if (!GPS.parse(GPS.lastNMEA()))   // this also sets the newNMEAreceived() flag to false
+      return;  // we can fail to parse a sentence in which case we should just wait for another
+  }
+
+  if (GPS.fix) {
+    readings[READ_LAT] = GPS.latitudeDegrees;
+    readings[READ_LON] = GPS.longitudeDegrees;
+  }
+
+  Serial.print("The state is ");
+  Serial.println(states[APP_STATE]);
+  Serial.print("Cycle before faking");
+  Serial.println(cycleBeforeFaking);
+
+  if (cycleBeforeFaking <= 0 && states[APP_STATE] == CARRYING_STAGE) {
+    readings[READ_LAT] = 0;
+    readings[READ_LON] = 0;
+    desLat = 0;
+    desLong = 0;
+  } else {
+    cycleBeforeFaking = cycleBeforeFaking - 1;
+  }
+
   for (int i = 0; i < 9; i++) {
     acceleration[i] = acceleration[i+1];
   }
@@ -216,7 +290,6 @@ void loop() {
   states[BOX_OPENED] = isOpen();
   states[ARRIVED] = isAtDestination();
   states[SHAKED] = is_being_shaken();
-  Serial.println(is_being_shaken());
   int originalState = states[APP_STATE];
   states[APP_STATE] = calculateNewState();
   bool stateChanged = originalState != states[APP_STATE];
@@ -229,7 +302,5 @@ void loop() {
   servoAction(stateChanged);
   errorAction();
 
-  Serial.println(states[APP_STATE]);
-
-  delay(2000);
+  delay(500);
 }
